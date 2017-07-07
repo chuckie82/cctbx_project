@@ -115,6 +115,12 @@ class Reader(object):
   def copy(self, filenames):
     return Reader(filenames)
 
+  def is_single_file_reader(self):
+    return False
+
+  def master_path(self):
+    return ""
+
 
 class Masker(object):
 
@@ -346,7 +352,8 @@ class Format(object):
                    detector=None,
                    goniometer=None,
                    scan=None,
-                   sweep_as_imageset=False,
+                   as_imageset=False,
+                   as_sweep=False,
                    single_file_indices=None,
                    format_kwargs=None):
     '''
@@ -356,6 +363,10 @@ class Format(object):
     from dxtbx.imageset import ImageSet
     from dxtbx.imageset import ImageSweep
     from dxtbx.sweep_filenames import template_regex
+    from os.path import abspath
+
+    # Get filename absolute paths
+    filenames = map(abspath, filenames)
 
     # Make it a dict
     if format_kwargs is None:
@@ -374,14 +385,24 @@ class Format(object):
     params = format_kwargs
 
     # Check if we have a sweep
-    scan = format_instance.get_scan()
-    if scan is not None and scan.get_oscillation()[1] != 0:
+    if scan is None:
+      test_scan = format_instance.get_scan()
+    else:
+      test_scan = scan
+    if test_scan is not None and test_scan.get_oscillation()[1] != 0:
       is_sweep = True
     else:
       is_sweep = False
 
+    # Make sure only 1 or none is set
+    assert [as_imageset, as_sweep].count(True) < 2
+    if as_imageset:
+      is_sweep = False
+    elif as_sweep:
+      is_sweep = True
+
     # Create an imageset or sweep
-    if not is_sweep or sweep_as_imageset == True:
+    if not is_sweep:
 
       # Create the imageset
       iset = ImageSet(
@@ -389,7 +410,8 @@ class Format(object):
         masker = masker,
         properties = {
           "vendor" : vendor,
-          "params" : params
+          "params" : params,
+          "format" : str(Class)
         },
         detectorbase_reader = dbread)
 
@@ -418,7 +440,11 @@ class Format(object):
     else:
 
       # Get the template
-      template = template_regex(filenames[0])
+      template = template_regex(filenames[0])[0]
+
+      # Check scan makes sense
+      if scan:
+        assert scan.get_num_images() == len(filenames)
 
       # If any are None then read from format
       if [beam, detector, goniometer, scan].count(None) != 0:
@@ -428,9 +454,10 @@ class Format(object):
         scan       = format_instance.get_scan()
 
         # Get the scan model
-        for f in filenames[1:]:
-          format_instance = Class(f, **format_kwargs)
-          scan += format_instance.get_scan()
+        if scan is not None:
+          for f in filenames[1:]:
+            format_instance = Class(f, **format_kwargs)
+            scan += format_instance.get_scan()
 
       # Create the sweep
       iset = ImageSweep(
@@ -443,6 +470,7 @@ class Format(object):
         properties = {
           "vendor"   : vendor,
           "params"   : params,
+          "format"   : str(Class),
           "template" : template,
         },
         detectorbase_reader = dbread)

@@ -4,7 +4,7 @@ class DetectorBaseReader(object):
 
   _format_class_ = None
 
-  def __init__(self, filenames, indices, **kwargs):
+  def __init__(self, filenames, indices=None, **kwargs):
     self.kwargs = kwargs
     self.format_class = DetectorBaseReader._format_class_
     assert len(filenames) == 1
@@ -65,6 +65,12 @@ class Reader(object):
 
   def identifiers(self):
     return ["%s-%d" % (self._filename, self._indices[index]) for index in range(len(self))]
+
+  def is_single_file_reader(self):
+    return True
+
+  def master_path(self):
+    return self._filename
 
 
 class Masker(object):
@@ -169,7 +175,8 @@ class FormatMultiImage(object):
                    detector=None,
                    goniometer=None,
                    scan=None,
-                   sweep_as_imageset=False,
+                   as_sweep=False,
+                   as_imageset=False,
                    single_file_indices=None,
                    format_kwargs=None):
     '''
@@ -178,6 +185,10 @@ class FormatMultiImage(object):
     '''
     from dxtbx.imageset import ImageSet
     from dxtbx.imageset import ImageSweep
+    from os.path import abspath
+
+    # Make filenames absolute
+    filenames = map(abspath, filenames)
 
     # Make it a dictionary
     if format_kwargs is None:
@@ -197,14 +208,24 @@ class FormatMultiImage(object):
     params = format_kwargs
 
     # Check if we have a sweep
-    scan = format_instance.get_scan()
-    if scan is not None and scan.get_oscillation()[1] != 0:
+    if scan is None:
+      test_scan = format_instance.get_scan()
+    else:
+      test_scan = scan
+    if test_scan is not None and test_scan.get_oscillation()[1] != 0:
       is_sweep = True
     else:
       is_sweep = False
 
+    # Make sure only 1 or none is set
+    assert [as_imageset, as_sweep].count(True) < 2
+    if as_imageset:
+      is_sweep = False
+    elif as_sweep:
+      is_sweep = True
+
     # Create an imageset or sweep
-    if not is_sweep or sweep_as_imageset == True:
+    if not is_sweep:
 
       # Create the imageset
       iset = ImageSet(
@@ -212,7 +233,8 @@ class FormatMultiImage(object):
         masker = masker,
         properties = {
           "vendor" : vendor,
-          "params" : params
+          "params" : params,
+          "format" : str(Class)
         },
         detectorbase_reader = dbread)
 
@@ -247,6 +269,13 @@ class FormatMultiImage(object):
         assert all(i == j for i, j in zip(
           single_file_indices[:-1],
           single_file_indices[1:]))
+        num_images = len(single_file_indices)
+      else:
+        num_images = format_instance.get_num_images()
+
+      # Check the scan makes sense
+      if scan is not None:
+        assert scan.get_num_images() == num_images
 
       # If any are None then read from format
       if [beam, detector, goniometer, scan].count(None) != 0:
@@ -256,8 +285,9 @@ class FormatMultiImage(object):
         scan       = format_instance.get_scan()
 
         # Get the scan model
-        for i in range(format_instance.get_num_images()):
-          scan += format_instance.get_scan(i)
+        if scan is not None:
+          for i in range(format_instance.get_num_images()):
+            scan += format_instance.get_scan(i)
 
       # Create the sweep
       iset = ImageSweep(
@@ -270,6 +300,7 @@ class FormatMultiImage(object):
         properties = {
           "vendor"   : vendor,
           "params"   : params,
+          "format"   : str(Class),
           "template" : template,
         },
         detectorbase_reader = dbread)

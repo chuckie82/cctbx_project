@@ -687,35 +687,35 @@ class ImageSet(object):
     ''' Return a list of filenames referenced by this set. '''
     return self._reader.paths()
 
-  def get_detector(self, index=None):
+  def get_detector(self, index=0):
     ''' Get the detector. '''
     return self._detector_list[index]
 
-  def set_detector(self, detector, index=None):
+  def set_detector(self, detector, index=0):
     ''' Set the detector model.'''
     self._detector_list[index] = detector
 
-  def get_beam(self, index=None):
+  def get_beam(self, index=0):
     ''' Get the beam. '''
     return self._beam_list[index]
 
-  def set_beam(self, beam, index=None):
+  def set_beam(self, beam, index=0):
     ''' Set the beam model.'''
     self._beam_list[index] = beam
 
-  def get_goniometer(self, index=None):
+  def get_goniometer(self, index=0):
     ''' Get the goniometer model. '''
     return self._goniometer_list[index]
 
-  def set_goniometer(self, goniometer, index=None):
+  def set_goniometer(self, goniometer, index=0):
     ''' Set the goniometer model. '''
     self._goniometer_list[index] = goniometer
 
-  def get_scan(self, index=None):
+  def get_scan(self, index=0):
     ''' Get the scan model. '''
     return self._scan_list[index]
 
-  def set_scan(self, scan, index=None):
+  def set_scan(self, scan, index=0):
     ''' Set the scan model. '''
     self._scan_list[index] = scan
 
@@ -730,6 +730,19 @@ class ImageSet(object):
   def get_image_identifier(self, index):
     ''' Get the path for the index '''
     return self._reader.identifiers()[index]
+
+  def get_format_class(self):
+    ''' Get format class name '''
+    return self._properties['format']
+
+  def reader(self):
+    return self._reader
+
+  def masker(self):
+    return self._masker
+
+  def params(self):
+    return self._properties['params']
 
 
 class ImageGrid(ImageSet):
@@ -1222,7 +1235,7 @@ class ImageSetFactory(object):
         imagesetlist.append(iset)
       except Exception, e:
         if not ignore_unknown:
-          raise e
+          raise
 
     # Return the imageset list
     return imagesetlist
@@ -1308,7 +1321,7 @@ class ImageSetFactory(object):
     imageset = format_class.get_imageset(filenames)
 
     # Return the image set
-    return image_set
+    return imageset
 
   @staticmethod
   def _create_sweep(filelist, check_headers):
@@ -1371,15 +1384,18 @@ class ImageSetFactory(object):
     from dxtbx.format.Format import Format
 
     # Get the format object
-    if format_class == None and check_format:
-      format_class = Registry.find(filenames[0])
+    if format_class == None:
+      if check_format:
+        format_class = Registry.find(filenames[0])
+      else:
+        format_class = Format
     else:
-      format_class = Format
+      format_class = format_class
 
     imageset = format_class.get_imageset(
       filenames,
       single_file_indices = single_file_indices,
-      sweep_as_imageset   = True,
+      as_imageset   = True,
       format_kwargs       = format_kwargs)
 
     # Return the imageset
@@ -1430,10 +1446,13 @@ class ImageSetFactory(object):
       assert(array_range == scan.get_array_range())
 
     # Get the format object and reader
-    if format_class is None and check_format:
-      format_class = Registry.find(filenames[0])
+    if format_class == None:
+      if check_format:
+        format_class = Registry.find(filenames[0])
+      else:
+        format_class = Format
     else:
-      format_class = Format
+      format_class = format_class
 
     filenames = [template_format % (i+1) for i in range(*array_range)]
 
