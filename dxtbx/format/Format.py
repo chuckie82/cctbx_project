@@ -68,6 +68,82 @@ class _MetaFormat(type):
   def get_cache_controller(cls):
     return cls._cache_controller
 
+
+
+class DetectorBaseReader(object):
+
+  _format_class_ = None
+
+  def __init__(self, filenames, **kwargs):
+    self._kwargs = kwargs
+    self.format_class = DetectorBaseReader._format_class_
+    self._filenames = filenames
+
+  def get(self, index):
+    format_instance = self.format_class.get_instance(
+      self._filenames[index],
+      **self._kwargs)
+    return format_instance.get_detectorbase()
+
+  def __len__(self):
+    return len(self._filenames)
+
+  def copy(self, filenames):
+    return DetectorBaseReader(filenames)
+
+class Reader(object):
+
+  _format_class_ = None
+
+  def __init__(self, filenames, **kwargs):
+    self._kwargs = kwargs
+    self.format_class = Reader._format_class_
+    self._filenames = filenames
+
+  def read(self, index):
+    format_instance = self.format_class.get_instance(
+      self._filenames[index],
+      **self._kwargs)
+    return format_instance.get_raw_data()
+
+  def paths(self):
+    return self._filenames
+
+  def __len__(self):
+    return len(self._filenames)
+
+  def copy(self, filenames):
+    return Reader(filenames)
+
+
+class Masker(object):
+
+  _format_class_ = None
+
+  def __init__(self, filenames, **kwargs):
+    self._kwargs = kwargs
+    self.format_class = Masker._format_class_
+    self._filenames = filenames
+
+  def get(self, index, goniometer=None):
+    format_instance = self.format_class.get_instance(
+      self._filenames[index],
+      **self._kwargs)
+    return format_instance.get_mask(goniometer=goniometer)
+
+  def paths(self):
+    return self._filenames
+
+  def __len__(self):
+    return len(self._filenames)
+
+  def copy(self, filenames):
+    return Masker(filenames)
+
+  def identifiers(self):
+    return self.paths()
+
+
 class Format(object):
   '''A base class for the representation and interrogation of diffraction
   image formats, from which all classes for reading the header should be
@@ -227,35 +303,21 @@ class Format(object):
     return _detectorbase_proxy(self)
 
   @classmethod
-  def get_instance(Class, filename):
+  def get_instance(Class, filename, **kwargs):
     if not hasattr(Class, "_current_instance_") or Class._current_filename_ != filename:
-      Class._current_instance_ = Class(filename)
+      Class._current_instance_ = Class(filename, **kwargs)
       Class._current_filename_ = filename
     return Class._current_instance_
 
   @classmethod
-  def get_detectorbase_factory(Class):
+  def get_detectorbase_reader(Class):
     '''
     Return a factory object to create detector base instances
 
     '''
-
-    class DetectorBaseFactory(object):
-
-      def __init__(self, filenames):
-        self._filenames = filenames
-
-      def get(self, index):
-        format_instance = Class.get_instance(self._filenames[index])
-        return format_instance.get_detectorbase()
-
-      def __len__(self):
-        return len(self._filenames)
-
-      def copy(self, filenames):
-        return DetectorBaseFactory(filenames)
-
-    return DetectorBaseFactory
+    obj = DetectorBaseReader
+    obj._format_class_ = Class
+    return obj
 
   @classmethod
   def get_reader(Class):
@@ -263,26 +325,9 @@ class Format(object):
     Return a reader class
 
     '''
-
-    class Reader(object):
-
-      def __init__(self, filenames):
-        self._filenames = filenames
-
-      def read(self, index):
-        format_instance = Class.get_instance(self._filenames[index])
-        return format_instance.get_raw_data()
-
-      def paths(self):
-        return self._filenames
-
-      def __len__(self):
-        return len(self._filenames)
-
-      def copy(self, filenames):
-        return Reader(filenames)
-
-    return Reader
+    obj = Reader
+    obj._format_class_ = Class
+    return obj
 
   @classmethod
   def get_masker(Class):
@@ -290,28 +335,9 @@ class Format(object):
     Return a masker class
 
     '''
-    class Masker(object):
-
-      def __init__(self, filenames):
-        self._filenames = filenames
-
-      def get(self, index):
-        format_instance = Class.get_instance(self._filenames[index])
-        return format_instance.get_mask()
-
-      def paths(self):
-        return self._filenames
-
-      def __len__(self):
-        return len(self._filenames)
-
-      def copy(self, filenames):
-        return Masker(filenames)
-
-      def identifiers(self):
-        return self.paths()
-
-    return Masker
+    obj = Masker
+    obj._format_class_ = Class
+    return obj
 
   @classmethod
   def get_imageset(Class,
@@ -320,30 +346,32 @@ class Format(object):
                    detector=None,
                    goniometer=None,
                    scan=None,
-                   sweep_as_imageset=False):
+                   sweep_as_imageset=False,
+                   single_file_indices=None,
+                   format_kwargs=None):
     '''
     Factory method to create an imageset
 
     '''
-    from dxtbx.format.FormatMultiImage import FormatMultiImage
     from dxtbx.imageset import ImageSet
     from dxtbx.imageset import ImageSweep
+    from dxtbx.sweep_filenames import template_regex
+
+    # Make it a dict
+    if format_kwargs is None:
+      format_kwargs = {}
 
     # Get some information from the format class
-    reader = Class.get_reader()(filenames)
-    masker = Class.get_masker()(filenames)
-    dbfact = Class.get_detectorbase_factory()(filenames)
+    reader = Class.get_reader()(filenames, **format_kwargs)
+    masker = Class.get_masker()(filenames, **format_kwargs)
+    dbread = Class.get_detectorbase_reader()(filenames, **format_kwargs)
 
     # Get the format instance
-    format_instance = Class(filenames[0])
-    if isinstance(format_instance, FormatMultiImage):
-      assert len(filenames) == 1
-      is_multi_image_format = True
-    else:
-      is_multi_image_format = False
+    format_instance = Class(filenames[0], **format_kwargs)
 
     # Read the vendor type
     vendor = format_instance.get_vendortype()
+    params = format_kwargs
 
     # Check if we have a sweep
     scan = format_instance.get_scan()
@@ -360,9 +388,10 @@ class Format(object):
         reader = reader,
         masker = masker,
         properties = {
-          "vendor" : vendor
+          "vendor" : vendor,
+          "params" : params
         },
-        detectorbase_factory = dbfact)
+        detectorbase_reader = dbread)
 
       # If any are None then read from format
       if [beam, detector, goniometer, scan].count(None) != 0:
@@ -372,29 +401,24 @@ class Format(object):
         detector = []
         goniometer = []
         scan = []
-        if is_multi_image_format:
-          for i in range(format_instance.get_num_images()):
-            beam.append(format_instance.get_beam(i))
-            detector.append(format_instance.get_detector(i))
-            goniometer.append(format_instance.get_goniometer(i))
-            scan.append(format_instance.get_scan(i))
-        else:
-          for f in filenames:
-            format_instance = Class(f)
-            beam.append(format_instance.get_beam())
-            detector.append(format_instance.get_detector())
-            goniometer.append(format_instance.get_goniometer())
-            scan.append(format_instance.get_scan())
+        for f in filenames:
+          format_instance = Class(f, **format_kwargs)
+          beam.append(format_instance.get_beam())
+          detector.append(format_instance.get_detector())
+          goniometer.append(format_instance.get_goniometer())
+          scan.append(format_instance.get_scan())
 
       # Set the list of models
       for i in range(len(filenames)):
-        format_instance = Class(filenames[i])
         iset.set_beam(beam[i], i)
         iset.set_detector(detector[i], i)
         iset.set_goniometer(goniometer[i], i)
         iset.set_scan(scan[i], i)
 
     else:
+
+      # Get the template
+      template = template_regex(filenames[0])
 
       # If any are None then read from format
       if [beam, detector, goniometer, scan].count(None) != 0:
@@ -404,13 +428,9 @@ class Format(object):
         scan       = format_instance.get_scan()
 
         # Get the scan model
-        if is_multi_image_format:
-          for i in range(format_instance.get_num_images()):
-            scan += format_instance.get_scan(i)
-        else:
-          for f in filenames[1:]:
-            format_instance = Class(f)
-            scan += format_instance.get_scan()
+        for f in filenames[1:]:
+          format_instance = Class(f, **format_kwargs)
+          scan += format_instance.get_scan()
 
       # Create the sweep
       iset = ImageSweep(
@@ -421,9 +441,11 @@ class Format(object):
         goniometer = goniometer,
         scan       = scan,
         properties = {
-          "vendor" : vendor
+          "vendor"   : vendor,
+          "params"   : params,
+          "template" : template,
         },
-        detectorbase_factory = dbfact)
+        detectorbase_reader = dbread)
 
     # Return the imageset
     return iset
