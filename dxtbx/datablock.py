@@ -635,7 +635,7 @@ class DataBlockFilenameImporter(object):
   def _create_single_file_imageset(self, format_class, filename,
                                    format_kwargs=None):
     ''' Create an imageset from a multi image file. '''
-    from dxtbx.imageset import SingleFileReader, ImageSet, ImageSweep
+    from dxtbx.imageset import ImageSet, ImageSweep
     from os.path import abspath
     if format_kwargs is None:
       format_kwargs = {}

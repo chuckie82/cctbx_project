@@ -95,22 +95,14 @@ class TestFormat(object):
       format_class = Registry.find(image)
       reader = format_class.get_reader()([image])
       masker = format_class.get_masker()([image])
-      dbread = format_class.get_detectorbase_reader()([image])
 
       N = len(reader)
 
       for i in range(N):
         data = reader.read(i)
         mask = masker.get(i)
-        try:
-          detb = dbread.get(i)
-        except RuntimeError:
-          db_fail_count += 1
 
       iset = format_class.get_imageset([image])
-
-    # Three images don't have detector base
-    assert db_fail_count == 3
 
     print 'OK'
 
@@ -224,7 +216,7 @@ class TestImageSet(object):
     try:
       self.tst_get_models_index(imageset, outside_index)
       assert(False)
-    except KeyError:
+    except IndexError:
       pass
     print 'OK'
 

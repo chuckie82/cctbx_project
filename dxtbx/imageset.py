@@ -478,21 +478,17 @@ class ExternalLookup(object):
     self.pedestal = ExternalLookupItem()
 
 
-class ImageSet(object):
-  ''' A class exposing the external image set interface. '''
+
+class ImageSetData(object):
 
   def __init__(self,
                reader,
                masker=None,
-               properties={},
-               detectorbase_reader=None):
-    ''' Initialise the ImageSet object.
-
-    Params:
-        reader The reader object
-
-    '''
-
+               beam = None,
+               detector = None,
+               goniometer = None,
+               scan = None,
+               properties={}):
 
     # If no reader is set then throw an exception
     if not reader:
@@ -501,18 +497,57 @@ class ImageSet(object):
     # Check input
     if masker:
       assert len(masker) == len(reader)
-    if detectorbase_reader:
-      assert len(detectorbase_reader) == len(reader)
 
-    # Set the reader
-    self._reader = reader
-    self._masker = masker
-    self._beam_list = dict()
-    self._detector_list = dict()
-    self._goniometer_list = dict()
-    self._scan_list = dict()
-    self._properties = properties
-    self._detectorbase_reader = detectorbase_reader
+    # Set the data
+    self.reader = reader
+    self.masker = masker
+    if beam is None:
+      self.beam = dict()
+    else:
+      self.beam = beam
+    if detector is None:
+      self.detector = dict()
+    else:
+      self.detector = detector
+    if goniometer is None:
+      self.goniometer = dict()
+    else:
+      self.goniometer = goniometer
+    if scan is None:
+      self.scan = dict()
+    else:
+      self.scan = scan
+    self.properties = properties
+
+  def data(self, index):
+    return self.reader.read(index)
+
+  def mask(self, index, goniometer=None):
+    return self.masker.get(index, goniometer=goniometer)
+
+  def paths(self):
+    return self.reader.paths()
+
+  def identifiers(self):
+    return self.reader.identifiers()
+
+
+class ImageSet(object):
+
+  def __init__(self,
+               data,
+               indices = None):
+
+    # Set the imageset data
+    self._data = data
+
+    # Check if the indices have been set
+    if indices:
+      assert min(indices) >= 0
+      assert max(indices) < len(data.reader)
+      self._indices = indices
+    else:
+      self._indices = list(range(len(data.reader)))
 
     # Image cache
     self.image_cache = None
@@ -535,42 +570,8 @@ class ImageSet(object):
 
     '''
     if isinstance(item, slice):
-
-      # Get the filenames
-      filenames = self.paths()[item]
-
-      # Get reader
-      reader = self._reader.copy(filenames)
-
-      # Get masker
-      if self._masker:
-        masker = self._masker.copy(filenames)
-      else:
-        masker = None
-
-      # Get detector base factory
-      if self._detectorbase_reader:
-        dbread = self._detectorbase_reader.copy(filenames)
-      else:
-        dbread = None
-
-      # Create new imageset
-      subset = ImageSet(
-        reader,
-        masker = masker,
-        properties = self._properties,
-        detectorbase_reader = dbread)
-
-      # Set the models
-      for i, j in enumerate(range(len(self))[item]):
-        subset.set_beam(self.get_beam(j), i)
-        subset.set_detector(self.get_detector(j), i)
-        subset.set_goniometer(self.get_goniometer(j), i)
-        subset.set_scan(self.get_scan(j), i)
-
-      # Set external lookup maps
+      subset = ImageSet(self._data, self._indices[item])
       subset.external_lookup = self.external_lookup
-
       return subset
     else:
       return self.get_corrected_data(item)
@@ -583,7 +584,7 @@ class ImageSet(object):
     if self.image_cache is not None and self.image_cache[0] == index:
       image = self.image_cache[1]
     else:
-      image = self._reader.read(index)
+      image = self._data.data(self._indices[index])
       if not isinstance(image, tuple):
         image = (image,)
       self.image_cache = (index, image)
@@ -617,7 +618,7 @@ class ImageSet(object):
 
     '''
     from scitbx.array_family import flex
-    gain = [p.get_gain() for p in self.get_detector(0)]
+    gain = [p.get_gain() for p in self.get_detector(index)]
     if all([g > 0 for g in gain]):
       return gain
     return self.external_lookup.gain.data
@@ -650,7 +651,7 @@ class ImageSet(object):
     # Check for a dynamic mask
     if goniometer is None:
       goniometer = self.get_goniometer(index)
-    dyn_mask = self._masker.get(index, goniometer=goniometer)
+    dyn_mask = self._data.mask(self._indices[index], goniometer=goniometer)
     if dyn_mask is not None:
       mask = tuple([m1 & m2 for m1, m2 in zip(dyn_mask, mask)])
 
@@ -662,9 +663,13 @@ class ImageSet(object):
       mask = tuple([m1 & m2 for m1, m2 in zip(mask, ext_mask)])
     return mask
 
+  def indices(self):
+    ''' Return the indices '''
+    return self._indices
+
   def __len__(self):
     ''' Return the number of images in this image set. '''
-    return len(self._reader)
+    return len(self._indices)
 
   def __str__(self):
     ''' Return the array indices of the image set as a string. '''
@@ -673,7 +678,7 @@ class ImageSet(object):
   def __iter__(self):
     ''' Iterate over the array indices and read each image in turn. '''
     for i in range(len(self)):
-      yield self._reader.read(i)
+      yield self.get_raw_data(i)
 
   def __eq__(self, other):
     ''' Compare this image set to another. '''
@@ -685,64 +690,364 @@ class ImageSet(object):
 
   def paths(self):
     ''' Return a list of filenames referenced by this set. '''
-    return self._reader.paths()
+    paths = self._data.paths()
+    return [paths[i] for i in self._indices]
 
   def get_detector(self, index=0):
     ''' Get the detector. '''
-    return self._detector_list[index]
+    return self._data.detector[self._indices[index]]
 
   def set_detector(self, detector, index=0):
     ''' Set the detector model.'''
-    self._detector_list[index] = detector
+    self._data.detector[self._indices[index]] = detector
 
   def get_beam(self, index=0):
     ''' Get the beam. '''
-    return self._beam_list[index]
+    return self._data.beam[self._indices[index]]
 
   def set_beam(self, beam, index=0):
     ''' Set the beam model.'''
-    self._beam_list[index] = beam
+    self._data.beam[self._indices[index]] = beam
 
   def get_goniometer(self, index=0):
     ''' Get the goniometer model. '''
-    return self._goniometer_list[index]
+    return self._data.goniometer[self._indices[index]]
 
   def set_goniometer(self, goniometer, index=0):
     ''' Set the goniometer model. '''
-    self._goniometer_list[index] = goniometer
+    self._data.goniometer[self._indices[index]] = goniometer
 
   def get_scan(self, index=0):
     ''' Get the scan model. '''
-    return self._scan_list[index]
+    return self._data.scan[self._indices[index]]
 
   def set_scan(self, scan, index=0):
     ''' Set the scan model. '''
-    self._scan_list[index] = scan
-
-  def get_detectorbase(self, index):
-    ''' Get the detector base instance for the given index. '''
-    return self._detectorbase_reader.get(index)
+    self._data.scan[self._indices[index]] = scan
 
   def get_vendortype(self, index):
     ''' Get the vendor information. '''
-    return self._properties['vendor']
+    return self._data.properties['vendor']
 
   def get_image_identifier(self, index):
     ''' Get the path for the index '''
-    return self._reader.identifiers()[index]
+    return self._data.identifiers()[self._indices[index]]
 
   def get_format_class(self):
     ''' Get format class name '''
-    return self._properties['format']
+    return self._data.properties['format']
 
   def reader(self):
-    return self._reader
+    return self._data.reader
 
   def masker(self):
-    return self._masker
+    return self._data.masker
 
   def params(self):
-    return self._properties['params']
+    return self._data.properties['params']
+
+  def complete_set(self):
+    '''
+    Return an imageset with all images
+
+    '''
+    return ImageSet(self._data)
+
+
+
+def get_detectorbase(self, index):
+  '''
+  A function to be injected into the imageset to get the detectorbase instance
+
+  '''
+  kwargs = self.params()
+  if self.reader().is_single_file_reader():
+    format_instance = self.get_format_class().get_instance(self.reader().master_path(), **kwargs)
+    return format_instance.get_detectorbase(self.indices()[index])
+  else:
+    format_instance = self.get_format_class().get_instance(self.paths()[index], **kwargs)
+    return format_instance.get_detectorbase()
+
+# Inject the function
+ImageSet.get_detectorbase = get_detectorbase
+
+
+
+# class ImageSet(object):
+#   ''' A class exposing the external image set interface. '''
+
+#   def __init__(self,
+#                reader,
+#                masker=None,
+#                indices=None,
+#                properties={},
+#                detectorbase_reader=None):
+#     ''' Initialise the ImageSet object.
+
+#     Params:
+#         reader The reader object
+
+#     '''
+
+
+#     # If no reader is set then throw an exception
+#     if not reader:
+#       raise ValueError("ImageSet needs a reader!")
+
+#     # Check input
+#     if masker:
+#       assert len(masker) == len(reader)
+#     if detectorbase_reader:
+#       assert len(detectorbase_reader) == len(reader)
+
+#     if indices:
+#       assert min(indices) >= 0
+#       assert max(indices) < len(reader)
+#       assert all(i1 == i2 for i1, i2 in zip(indices[:-1], indices[1:]))
+#       self._indices = indices
+#     else:
+#       self._indices = list(range(len(reader)))
+
+#     # Set the reader
+#     self._reader = reader
+#     self._masker = masker
+#     self._beam_list = dict()
+#     self._detector_list = dict()
+#     self._goniometer_list = dict()
+#     self._scan_list = dict()
+#     self._properties = properties
+#     self._detectorbase_reader = detectorbase_reader
+
+#     # Image cache
+#     self.image_cache = None
+
+#     # Some static stuff
+#     self.external_lookup = ExternalLookup()
+
+#   def __getitem__(self, item):
+#     ''' Get an item from the image set stream.
+
+#     If the item is an index, read and return the image at the given index.
+#     Otherwise, if the item is a slice, then create a new ImageSet object
+#     with the given number of array indices from the slice.
+
+#     Params:
+#         item The index or slice
+
+#     Returns:
+#         An image or new ImageSet object
+
+#     '''
+#     if isinstance(item, slice):
+
+#       # Get the filenames
+#       filenames = self.paths()[item]
+
+#       # Get reader
+#       reader = self._reader.copy(filenames)
+
+#       # Get masker
+#       if self._masker:
+#         masker = self._masker.copy(filenames)
+#       else:
+#         masker = None
+
+#       # Get detector base factory
+#       if self._detectorbase_reader:
+#         dbread = self._detectorbase_reader.copy(filenames)
+#       else:
+#         dbread = None
+
+#       # Create new imageset
+#       subset = ImageSet(
+#         reader,
+#         masker = masker,
+#         indices = self._indices,
+#         properties = self._properties,
+#         detectorbase_reader = dbread)
+
+#       # Set the models
+#       for i, j in enumerate(range(len(self))[item]):
+#         subset.set_beam(self.get_beam(j), i)
+#         subset.set_detector(self.get_detector(j), i)
+#         subset.set_goniometer(self.get_goniometer(j), i)
+#         subset.set_scan(self.get_scan(j), i)
+
+#       # Set external lookup maps
+#       subset.external_lookup = self.external_lookup
+
+#       return subset
+#     else:
+#       return self.get_corrected_data(item)
+
+#   def get_raw_data(self, index):
+#     '''
+#     Get the image at the given index
+
+#     '''
+#     if self.image_cache is not None and self.image_cache[0] == index:
+#       image = self.image_cache[1]
+#     else:
+#       image = self._reader.read(index)
+#       if not isinstance(image, tuple):
+#         image = (image,)
+#       self.image_cache = (index, image)
+#     return image
+
+#   def get_corrected_data(self, index):
+#     '''
+#     Get the corrected data: (raw_data - pedestal) * gain
+
+#     '''
+#     data = self.get_raw_data(index)
+#     gain = self.get_gain(index)
+#     pedestal = self.get_pedestal(index)
+#     if gain is None:
+#       gain = [None] * len(data)
+#     if pedestal is None:
+#       pedestal = [None] * len(data)
+#     result = []
+#     for d, p, g in zip(data, pedestal, gain):
+#       r = d.as_double()
+#       if p is not None:
+#         r = r - p
+#       if g is not None:
+#         r = r / g
+#       result.append(r)
+#     return tuple(result)
+
+#   def get_gain(self, index):
+#     '''
+#     Get the gain map
+
+#     '''
+#     from scitbx.array_family import flex
+#     gain = [p.get_gain() for p in self.get_detector(0)]
+#     if all([g > 0 for g in gain]):
+#       return gain
+#     return self.external_lookup.gain.data
+
+#   def get_pedestal(self, index):
+#     '''
+#     Get the pedestal
+
+#     '''
+#     from scitbx.array_family import flex
+#     return self.external_lookup.pedestal.data
+
+#   def get_mask(self, index, goniometer=None):
+#     '''
+#     Get the mask at the given index.
+#     Queries a format object for a dynamic mask if it exists.
+#     Otherwise uses image and trusted range.
+
+#     '''
+
+#     # Compute the trusted range mask
+#     image = self.get_raw_data(index)
+#     detector = self.get_detector(index)
+#     assert(len(image) == len(detector))
+#     mask = []
+#     for im, panel in zip(image, detector):
+#       mask.append(panel.get_trusted_range_mask(im))
+#     mask = tuple(mask)
+
+#     # Check for a dynamic mask
+#     if goniometer is None:
+#       goniometer = self.get_goniometer(index)
+#     dyn_mask = self._masker.get(index, goniometer=goniometer)
+#     if dyn_mask is not None:
+#       mask = tuple([m1 & m2 for m1, m2 in zip(dyn_mask, mask)])
+
+#     # Get the external mask
+#     ext_mask = self.external_lookup.mask.data
+
+#     # Return a combination mask
+#     if ext_mask is not None:
+#       mask = tuple([m1 & m2 for m1, m2 in zip(mask, ext_mask)])
+#     return mask
+
+#   def __len__(self):
+#     ''' Return the number of images in this image set. '''
+#     return len(self._reader)
+
+#   def __str__(self):
+#     ''' Return the array indices of the image set as a string. '''
+#     return str(self.paths())
+
+#   def __iter__(self):
+#     ''' Iterate over the array indices and read each image in turn. '''
+#     for i in range(len(self)):
+#       yield self._reader.read(i)
+
+#   def __eq__(self, other):
+#     ''' Compare this image set to another. '''
+#     if other is None:
+#       return False
+#     if other is self:
+#       return True
+#     return self.paths() == other.paths()
+
+#   def paths(self):
+#     ''' Return a list of filenames referenced by this set. '''
+#     return self._reader.paths()
+
+#   def get_detector(self, index=0):
+#     ''' Get the detector. '''
+#     return self._detector_list[index]
+
+#   def set_detector(self, detector, index=0):
+#     ''' Set the detector model.'''
+#     self._detector_list[index] = detector
+
+#   def get_beam(self, index=0):
+#     ''' Get the beam. '''
+#     return self._beam_list[index]
+
+#   def set_beam(self, beam, index=0):
+#     ''' Set the beam model.'''
+#     self._beam_list[index] = beam
+
+#   def get_goniometer(self, index=0):
+#     ''' Get the goniometer model. '''
+#     return self._goniometer_list[index]
+
+#   def set_goniometer(self, goniometer, index=0):
+#     ''' Set the goniometer model. '''
+#     self._goniometer_list[index] = goniometer
+
+#   def get_scan(self, index=0):
+#     ''' Get the scan model. '''
+#     return self._scan_list[index]
+
+#   def set_scan(self, scan, index=0):
+#     ''' Set the scan model. '''
+#     self._scan_list[index] = scan
+
+#   def get_detectorbase(self, index):
+#     ''' Get the detector base instance for the given index. '''
+#     return self._detectorbase_reader.get(index)
+
+#   def get_vendortype(self, index):
+#     ''' Get the vendor information. '''
+#     return self._properties['vendor']
+
+#   def get_image_identifier(self, index):
+#     ''' Get the path for the index '''
+#     return self._reader.identifiers()[index]
+
+#   def get_format_class(self):
+#     ''' Get format class name '''
+#     return self._properties['format']
+
+#   def reader(self):
+#     return self._reader
+
+#   def masker(self):
+#     return self._masker
+
+#   def params(self):
+#     return self._properties['params']
 
 
 class ImageGrid(ImageSet):
@@ -990,10 +1295,8 @@ class ImageSweep(ImageSet):
   ''' A class exposing the external sweep interface. '''
 
   def __init__(self,
-               reader,
-               masker = None,
-               properties = {},
-               detectorbase_reader=None,
+               data,
+               indices=None,
                beam=None,
                goniometer=None,
                detector=None,
@@ -1015,11 +1318,13 @@ class ImageSweep(ImageSet):
         scan The scan model
 
     '''
-    ImageSet.__init__(self,
-                      reader,
-                      masker,
-                      properties,
-                      detectorbase_reader)
+
+    if indices:
+      assert min(indices) >= 0
+      assert max(indices) < len(data.reader)
+      assert all(i1+1 == i2 for i1, i2 in zip(indices[:-1], indices[1:]))
+
+    ImageSet.__init__(self, data, indices)
     self._beam = beam
     self._goniometer = goniometer
     self._detector = detector
@@ -1043,24 +1348,6 @@ class ImageSweep(ImageSet):
       if item.step != None:
         raise IndexError('Sweeps must be sequential')
 
-      # Get the filenames
-      filenames = self.paths()[item]
-
-      # Get reader
-      reader = self._reader.copy(filenames)
-
-      # Get masker
-      if self._masker:
-        masker = self._masker.copy(filenames)
-      else:
-        masker = None
-
-      # Get detector base factory
-      if self._detectorbase_reader:
-        dbread = self._detectorbase_reader.copy(filenames)
-      else:
-        dbread = None
-
       if self._scan is None:
         scan = None
       else:
@@ -1068,10 +1355,8 @@ class ImageSweep(ImageSet):
 
       # Create new imageset
       subset = ImageSweep(
-        reader,
-        masker = masker,
-        properties = self._properties,
-        detectorbase_reader = dbread,
+        self._data,
+        self._indices[item],
         beam = self._beam,
         detector = self._detector,
         goniometer = self._goniometer,
@@ -1122,7 +1407,7 @@ class ImageSweep(ImageSet):
 
   def get_template(self):
     ''' Return the template '''
-    return self._properties['template']
+    return self._data.properties['template']
 
 
 class FilenameAnalyser(object):

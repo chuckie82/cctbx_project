@@ -70,27 +70,6 @@ class _MetaFormat(type):
 
 
 
-class DetectorBaseReader(object):
-
-  _format_class_ = None
-
-  def __init__(self, filenames, **kwargs):
-    self._kwargs = kwargs
-    self.format_class = DetectorBaseReader._format_class_
-    self._filenames = filenames
-
-  def get(self, index):
-    format_instance = self.format_class.get_instance(
-      self._filenames[index],
-      **self._kwargs)
-    return format_instance.get_detectorbase()
-
-  def __len__(self):
-    return len(self._filenames)
-
-  def copy(self, filenames):
-    return DetectorBaseReader(filenames)
-
 class Reader(object):
 
   _format_class_ = None
@@ -316,16 +295,6 @@ class Format(object):
     return Class._current_instance_
 
   @classmethod
-  def get_detectorbase_reader(Class):
-    '''
-    Return a factory object to create detector base instances
-
-    '''
-    obj = DetectorBaseReader
-    obj._format_class_ = Class
-    return obj
-
-  @classmethod
   def get_reader(Class):
     '''
     Return a reader class
@@ -360,6 +329,7 @@ class Format(object):
     Factory method to create an imageset
 
     '''
+    from dxtbx.imageset import ImageSetData
     from dxtbx.imageset import ImageSet
     from dxtbx.imageset import ImageSweep
     from dxtbx.sweep_filenames import template_regex
@@ -375,7 +345,6 @@ class Format(object):
     # Get some information from the format class
     reader = Class.get_reader()(filenames, **format_kwargs)
     masker = Class.get_masker()(filenames, **format_kwargs)
-    dbread = Class.get_detectorbase_reader()(filenames, **format_kwargs)
 
     # Get the format instance
     format_instance = Class(filenames[0], **format_kwargs)
@@ -406,14 +375,15 @@ class Format(object):
 
       # Create the imageset
       iset = ImageSet(
-        reader = reader,
-        masker = masker,
-        properties = {
-          "vendor" : vendor,
-          "params" : params,
-          "format" : str(Class)
-        },
-        detectorbase_reader = dbread)
+        ImageSetData(
+          reader = reader,
+          masker = masker,
+          properties = {
+            "vendor" : vendor,
+            "params" : params,
+            "format" : Class
+          }
+        ))
 
       # If any are None then read from format
       if [beam, detector, goniometer, scan].count(None) != 0:
@@ -461,19 +431,19 @@ class Format(object):
 
       # Create the sweep
       iset = ImageSweep(
-        reader     = reader,
-        masker     = masker,
+        ImageSetData(
+          reader     = reader,
+          masker     = masker,
+          properties = {
+            "vendor"   : vendor,
+            "params"   : params,
+            "format"   : Class,
+            "template" : template,
+          }),
         beam       = beam,
         detector   = detector,
         goniometer = goniometer,
-        scan       = scan,
-        properties = {
-          "vendor"   : vendor,
-          "params"   : params,
-          "format"   : str(Class),
-          "template" : template,
-        },
-        detectorbase_reader = dbread)
+        scan       = scan)
 
     # Return the imageset
     return iset

@@ -1,54 +1,20 @@
 from __future__ import absolute_import, division
 
-class DetectorBaseReader(object):
-
-  _format_class_ = None
-
-  def __init__(self, filenames, indices=None, **kwargs):
-    self.kwargs = kwargs
-    self.format_class = DetectorBaseReader._format_class_
-    assert len(filenames) == 1
-    self._filename = filenames[0]
-    if indices is None:
-      self._indices = list(range(self.num_images()))
-    else:
-      assert min(indices) >= 0 and max(indices) < self.num_images()
-      self._indices = indices
-
-  def get(self, index):
-    format_instance = self.format_class.get_instance(self._filename, **self.kwargs)
-    return format_instance.get_detectorbase(self._indices[index])
-
-  def copy(self, filenames):
-    return DetectorBaseReader(filenames)
-
-  def num_images(self):
-    format_instance = self.format_class.get_instance(self._filename, **self.kwargs)
-    return format_instance.get_num_images()
-
-  def __len__(self):
-    return len(self._indices)
-
 
 
 class Reader(object):
 
   _format_class_ = None
 
-  def __init__(self, filenames, indices=None, **kwargs):
+  def __init__(self, filenames, **kwargs):
     self.kwargs = kwargs
     self.format_class = Reader._format_class_
     assert len(filenames) == 1
     self._filename = filenames[0]
-    if indices is None:
-      self._indices = list(range(self.num_images()))
-    else:
-      assert min(indices) >= 0 and max(indices) < self.num_images()
-      self._indices = indices
 
   def read(self, index):
     format_instance = self.format_class.get_instance(self._filename, **self.kwargs)
-    return format_instance.get_raw_data(self._indices[index])
+    return format_instance.get_raw_data(index)
 
   def paths(self):
     return [self._filename]
@@ -58,13 +24,13 @@ class Reader(object):
     return format_instance.get_num_images()
 
   def __len__(self):
-    return len(self._indices)
+    return self.num_images()
 
   def copy(self, filenames, indices=None):
     return Reader(filenames, indices)
 
   def identifiers(self):
-    return ["%s-%d" % (self._filename, self._indices[index]) for index in range(len(self))]
+    return ["%s-%d" % (self._filename, index) for index in range(len(self))]
 
   def is_single_file_reader(self):
     return True
@@ -77,20 +43,15 @@ class Masker(object):
 
   _format_class_ = None
 
-  def __init__(self, filenames, indices=None, **kwargs):
+  def __init__(self, filenames, **kwargs):
     self.kwargs = kwargs
     self.format_class = Masker._format_class_
     assert len(filenames) == 1
     self._filename = filenames[0]
-    if indices is None:
-      self._indices = list(range(self.num_images()))
-    else:
-      assert min(indices) >= 0 and max(indices) < self.num_images()
-      self._indices = indices
 
   def get(self, index, goniometer=None):
     format_instance = self.format_class.get_instance(self._filename, **self.kwargs)
-    return format_instance.get_mask(self._indices[index], goniometer)
+    return format_instance.get_mask(index, goniometer)
 
   def paths(self):
     return [self._filename]
@@ -100,7 +61,7 @@ class Masker(object):
     return format_instance.get_num_images()
 
   def __len__(self):
-    return len(self._indices)
+    return self.num_images()
 
   def copy(self, filenames):
     return Masker(filenames)
@@ -139,16 +100,6 @@ class FormatMultiImage(object):
     raise RuntimeError('Overload!')
 
   @classmethod
-  def get_detectorbase_reader(Class):
-    '''
-    Return a factory object to create detector base instances
-
-    '''
-    obj = DetectorBaseReader
-    obj._format_class_ = Class
-    return obj
-
-  @classmethod
   def get_reader(Class):
     '''
     Return a reader class
@@ -183,6 +134,7 @@ class FormatMultiImage(object):
     Factory method to create an imageset
 
     '''
+    from dxtbx.imageset import ImageSetData
     from dxtbx.imageset import ImageSet
     from dxtbx.imageset import ImageSweep
     from os.path import abspath
@@ -195,9 +147,8 @@ class FormatMultiImage(object):
       format_kwargs = {}
 
     # Get some information from the format class
-    reader = Class.get_reader()(filenames, single_file_indices, **format_kwargs)
-    masker = Class.get_masker()(filenames, single_file_indices, **format_kwargs)
-    dbread = Class.get_detectorbase_reader()(filenames, single_file_indices, **format_kwargs)
+    reader = Class.get_reader()(filenames, **format_kwargs)
+    masker = Class.get_masker()(filenames, **format_kwargs)
 
     # Get the format instance
     assert len(filenames) == 1
@@ -229,14 +180,15 @@ class FormatMultiImage(object):
 
       # Create the imageset
       iset = ImageSet(
-        reader = reader,
-        masker = masker,
-        properties = {
-          "vendor" : vendor,
-          "params" : params,
-          "format" : str(Class)
-        },
-        detectorbase_reader = dbread)
+        ImageSetData(
+          reader = reader,
+          masker = masker,
+          properties = {
+            "vendor" : vendor,
+            "params" : params,
+            "format" : Class
+          }),
+        indices=single_file_indices)
 
       # If any are None then read from format
       if [beam, detector, goniometer, scan].count(None) != 0:
@@ -252,12 +204,15 @@ class FormatMultiImage(object):
           goniometer.append(format_instance.get_goniometer(i))
           scan.append(format_instance.get_scan(i))
 
+      if single_file_indices is None:
+        single_file_indices = list(range(format_instance.get_num_images()))
+
       # Set the list of models
-      for i in range(format_instance.get_num_images()):
-        iset.set_beam(beam[i], i)
-        iset.set_detector(detector[i], i)
-        iset.set_goniometer(goniometer[i], i)
-        iset.set_scan(scan[i], i)
+      for i in range(len(single_file_indices)):
+        iset.set_beam(beam[single_file_indices[i]], i)
+        iset.set_detector(detector[single_file_indices[i]], i)
+        iset.set_goniometer(goniometer[single_file_indices[i]], i)
+        iset.set_scan(scan[single_file_indices[i]], i)
 
     else:
 
@@ -291,19 +246,20 @@ class FormatMultiImage(object):
 
       # Create the sweep
       iset = ImageSweep(
-        reader     = reader,
-        masker     = masker,
+        ImageSetData(
+          reader     = reader,
+          masker     = masker,
+          properties = {
+            "vendor"   : vendor,
+            "params"   : params,
+            "format"   : Class,
+            "template" : template,
+          }),
         beam       = beam,
         detector   = detector,
         goniometer = goniometer,
         scan       = scan,
-        properties = {
-          "vendor"   : vendor,
-          "params"   : params,
-          "format"   : str(Class),
-          "template" : template,
-        },
-        detectorbase_reader = dbread)
+        indices=single_file_indices)
 
     # Return the imageset
     return iset
