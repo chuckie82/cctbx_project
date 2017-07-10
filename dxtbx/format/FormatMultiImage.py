@@ -12,6 +12,10 @@ class Reader(object):
     assert len(filenames) == 1
     self._filename = filenames[0]
 
+  def nullify_format_instance(self):
+    self.format_class._current_instance_ = None
+    self.format_class._current_filename_ = None
+
   def read(self, index):
     format_instance = self.format_class.get_instance(self._filename, **self.kwargs)
     return format_instance.get_raw_data(index)
@@ -76,16 +80,16 @@ class FormatMultiImage(object):
     raise RuntimeError('Overload!')
 
   def get_goniometer(self, index=None):
-    raise RuntimeError('Overload!')
+    return self._goniometer_instance
 
   def get_detector(self, index=None):
-    raise RuntimeError('Overload!')
+    return self._detector_instance
 
   def get_beam(self, index=None):
-    raise RuntimeError('Overload!')
+    return self._beam_instance
 
   def get_scan(self, index=None):
-    raise RuntimeError('Overload!')
+    return self._scan_instance
 
   def get_raw_data(self, index=None):
     raise RuntimeError('Overload!')
@@ -139,6 +143,9 @@ class FormatMultiImage(object):
     from dxtbx.imageset import ImageSweep
     from os.path import abspath
 
+    if isinstance(filenames, str):
+      filenames = [filenames]
+
     # Make filenames absolute
     filenames = map(abspath, filenames)
 
@@ -159,14 +166,6 @@ class FormatMultiImage(object):
     params = format_kwargs
 
     # Check if we have a sweep
-    if scan is None:
-      test_scan = format_instance.get_scan()
-    else:
-      test_scan = scan
-    if test_scan is not None and test_scan.get_oscillation()[1] != 0:
-      is_sweep = True
-    else:
-      is_sweep = False
 
     # Make sure only 1 or none is set
     assert [as_imageset, as_sweep].count(True) < 2
@@ -174,6 +173,23 @@ class FormatMultiImage(object):
       is_sweep = False
     elif as_sweep:
       is_sweep = True
+    else:
+      if scan is None and format_instance is None:
+        raise RuntimeError('''
+          One of the following needs to be set
+            - as_imageset=True
+            - as_sweep=True
+            - scan
+            - check_format=True
+      ''')
+      if scan is None:
+        test_scan = format_instance.get_scan()
+      else:
+        test_scan = scan
+      if test_scan is not None and test_scan.get_oscillation()[1] != 0:
+        is_sweep = True
+      else:
+        is_sweep = False
 
     # Create an imageset or sweep
     if not is_sweep:
@@ -233,16 +249,18 @@ class FormatMultiImage(object):
         assert scan.get_num_images() == num_images
 
       # If any are None then read from format
-      if [beam, detector, goniometer, scan].count(None) != 0:
-        beam       = format_instance.get_beam()
-        detector   = format_instance.get_detector()
+      if beam is None:
+        beam = format_instance.get_beam()
+      if detector is None:
+        detector = format_instance.get_detector()
+      if goniometer is None:
         goniometer = format_instance.get_goniometer()
-        scan       = format_instance.get_scan()
-
-        # Get the scan model
+      if scan is None:
+        scan = format_instance.get_scan()
         if scan is not None:
-          for i in range(format_instance.get_num_images()):
-            scan += format_instance.get_scan(i)
+          for f in filenames[1:]:
+            format_instance = Class(f, **format_kwargs)
+            scan += format_instance.get_scan()
 
       # Create the sweep
       iset = ImageSweep(

@@ -253,7 +253,7 @@ class DataBlock(object):
           image_list.append(image_dict)
         imageset["mask"] = abspath_or_none(iset.external_lookup.mask.filename)
         imageset['images'] = image_list
-        imageset['params'] = iset.format_kwargs()
+        imageset['params'] = iset.params()
         result['imageset'].append(imageset)
 
     # Add the models to the dictionary

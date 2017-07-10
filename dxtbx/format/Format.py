@@ -324,7 +324,9 @@ class Format(object):
                    as_imageset=False,
                    as_sweep=False,
                    single_file_indices=None,
-                   format_kwargs=None):
+                   format_kwargs=None,
+                   template=None,
+                   check_format=True):
     '''
     Factory method to create an imageset
 
@@ -347,21 +349,20 @@ class Format(object):
     masker = Class.get_masker()(filenames, **format_kwargs)
 
     # Get the format instance
-    format_instance = Class(filenames[0], **format_kwargs)
+    if check_format is True:
+      format_instance = Class(filenames[0], **format_kwargs)
+    else:
+      format_instance = None
 
     # Read the vendor type
-    vendor = format_instance.get_vendortype()
+    if check_format is True:
+      vendor = format_instance.get_vendortype()
+    else:
+      vendor = ""
+
+    # Get the format kwargs
     params = format_kwargs
 
-    # Check if we have a sweep
-    if scan is None:
-      test_scan = format_instance.get_scan()
-    else:
-      test_scan = scan
-    if test_scan is not None and test_scan.get_oscillation()[1] != 0:
-      is_sweep = True
-    else:
-      is_sweep = False
 
     # Make sure only 1 or none is set
     assert [as_imageset, as_sweep].count(True) < 2
@@ -369,6 +370,23 @@ class Format(object):
       is_sweep = False
     elif as_sweep:
       is_sweep = True
+    else:
+      if scan is None and format_instance is None:
+        raise RuntimeError('''
+          One of the following needs to be set
+            - as_imageset=True
+            - as_sweep=True
+            - scan
+            - check_format=True
+      ''')
+      if scan is None:
+        test_scan = format_instance.get_scan()
+      else:
+        test_scan = scan
+      if test_scan is not None and test_scan.get_oscillation()[1] != 0:
+        is_sweep = True
+      else:
+        is_sweep = False
 
     # Create an imageset or sweep
     if not is_sweep:
@@ -410,20 +428,23 @@ class Format(object):
     else:
 
       # Get the template
-      template = template_regex(filenames[0])[0]
+      if template is None:
+        template = template_regex(filenames[0])[0]
 
       # Check scan makes sense
       if scan:
-        assert scan.get_num_images() == len(filenames)
+        if check_format is True:
+          assert scan.get_num_images() == len(filenames)
 
       # If any are None then read from format
-      if [beam, detector, goniometer, scan].count(None) != 0:
-        beam       = format_instance.get_beam()
-        detector   = format_instance.get_detector()
+      if beam is None and format_instance is not None:
+        beam = format_instance.get_beam()
+      if detector is None and format_instance is not None:
+        detector = format_instance.get_detector()
+      if goniometer is None and format_instance is not None:
         goniometer = format_instance.get_goniometer()
-        scan       = format_instance.get_scan()
-
-        # Get the scan model
+      if scan is None and format_instance is not None:
+        scan = format_instance.get_scan()
         if scan is not None:
           for f in filenames[1:]:
             format_instance = Class(f, **format_kwargs)
